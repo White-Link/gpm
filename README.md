@@ -19,9 +19,9 @@ Official implementation of the paper *Unifying GANs and Score-Based Diffusion as
 
 ## [Animated Samples](https://jyfranceschi.fr/publications/gpm/)
 
-+<img src=https://jyfranceschi.fr/wp-content/uploads/2023/05/discr_flow_mnist.webp>
+![Discriminator Flow samples on MNIST](https://jyfranceschi.fr/wp-content/uploads/2023/05/discr_flow_mnist.webp)
 
-+<img src=https://jyfranceschi.fr/wp-content/uploads/2023/05/discr_flow_gaussians.webp>
+![Discriminator Flow samples on Gaussians](https://jyfranceschi.fr/wp-content/uploads/2023/05/discr_flow_gaussians_early_stop.webp)
 
 ## Requirements
 
