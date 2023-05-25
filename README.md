@@ -17,6 +17,12 @@ limitations under the License. -->
 
 Official implementation of the paper *Unifying GANs and Score-Based Diffusion as Generative Particle Models* (Jean-Yves Franceschi, Mike Gartrell, Ludovic Dos Santos, Thibaut Issenhuth, Emmanuel de Bézenac, Mickaël Chen, Alain Rakotomamonjy).
 
+## [Animated Samples](https://jyfranceschi.fr/publications/gpm/)
+
+![Discriminator Flow samples on MNIST](https://jyfranceschi.fr/wp-content/uploads/2023/05/discr_flow_mnist.webp)
+
+![Discriminator Flow samples on Gaussians](https://jyfranceschi.fr/wp-content/uploads/2023/05/discr_flow_gaussians.webp)
+
 ## Requirements
 
 All models were trained with Python 3.10.4 and PyTorch 1.13.1 using CUDA 11.8. The [`requirements.txt`](requirements.txt) file lists Python package dependencies.
