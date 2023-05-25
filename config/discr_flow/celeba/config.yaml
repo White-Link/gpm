@@ -1,0 +1,71 @@
+# Copyright 2023 Jean-Yves Franceschi, Mike Gartrell, Ludovic Dos Santos, Thibaut Issenhuth, Emmanuel de Bézenac, Mickaël Chen, Alain Rakotomamonjy
+
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+
+#     http://www.apache.org/licenses/LICENSE-2.0
+
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
+model: discr_flow
+model_params:  # `DiscrFlowDict` in `gpm/models/discr_flow/base.py`
+  model: ipm
+  nb_steps: 25
+  eta: 2
+  p_std: 1
+  grad_penalty: 0.05
+  grad_penalty_center: 0
+  embedding: fourier
+  embedding_size: 128
+  discriminator:  # `ResNetEncoderDict` in `gpm/networks/conv/resnet.py`
+    name: resnet
+    batch_norm: false
+    spectral_norm: false
+    width: 64
+    activation:  # `gpm/networks/activations.py`
+      name: leaky_relu
+  init:  # `gpm/networks/init.py`
+    name: normal
+    gain: 0.02
+
+dataset: celeba
+dataset_params:  # `gpm/data/image/celeba.py`
+  image_size: 64
+
+optim:
+  batch_size: 64
+  nb_steps: 200000
+  optimizers:
+    optimizer:
+      name: Adam  # PyTorch parameters
+      settings:
+        lr: 0.0002
+        betas: [0.5, 0.999]
+  schedulers: ~
+
+eval_freq: 1000
+eval:  # Can be is list of named evaluations
+  - config_name: 'standard'
+    batch_size: 100
+    nb_steps: 10
+    nb_quali: 20  # Number of qualitative outputs in the logs
+    tests: ['gen_quali', 'fid']  # List of outputs for this validation, cf. `gpm/eval/tests.py`
+    metric: 'fid'  # Will select the best model w.r.t. FID
+    test_params:  # `DiscrFlowInferenceDict` in `gpm/models/discr_flow/base.py`
+      nb_steps: 25
+save_best: true
+
+test:
+  - config_name: 'standard'
+    batch_size: 100
+    nb_steps: 0
+    nb_quali: 20
+    tests: ['gen_quali', 'fid']
+    test_params:
+      nb_steps: 25

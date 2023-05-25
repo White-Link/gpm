@@ -1,0 +1,101 @@
+# Copyright 2023 Jean-Yves Franceschi, Mike Gartrell, Ludovic Dos Santos, Thibaut Issenhuth, Emmanuel de Bézenac, Mickaël Chen, Alain Rakotomamonjy
+
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+
+#     http://www.apache.org/licenses/LICENSE-2.0
+
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
+model: edm
+model_params:
+  score_fn:
+    name: mlp
+    sigma_min: 0.002
+    sigma_max: 40
+    sigma_data: 0.5
+    embedding: fourier
+    embedding_size: 128
+    width: 512
+    depth: 4
+    activation:
+      name: leaky_relu
+  init:
+    name: default
+
+dataset: gaussians
+dataset_params:
+  size: 500000
+  nb: 5
+  radius: 3
+  std: 0.5
+
+optim:
+  batch_size: 128
+  nb_steps: 10000
+  optimizers:
+    score_optimizer:
+      name: Adam
+      settings:
+        lr: 0.0002
+  schedulers: ~
+
+eval_freq: 2000
+eval:
+  - config_name: 'edm_28'
+    batch_size: 128
+    nb_steps: 1
+    nb_quali: 128
+    tests: ['gen_quali']
+    test_params:
+      method: edm
+      nb_steps: 28
+      sigma_min: 0.002
+      sigma_max: 40
+      rho: 7
+      sde: false
+  - config_name: 'edm_7'
+    batch_size: 128
+    nb_steps: 1
+    nb_quali: 128
+    tests: ['gen_quali']
+    test_params:
+      method: edm
+      nb_steps: 7
+      sigma_min: 0.002
+      sigma_max: 40
+      rho: 7
+      sde: false
+save_best: false
+
+test:
+  - config_name: 'edm_28'
+    batch_size: 128
+    nb_steps: 1
+    nb_quali: 128
+    tests: ['gen_quali']
+    test_params:
+      method: edm
+      nb_steps: 28
+      sigma_min: 0.002
+      sigma_max: 40
+      rho: 7
+      sde: false
+  - config_name: 'edm_7'
+    batch_size: 128
+    nb_steps: 1
+    nb_quali: 128
+    tests: ['gen_quali']
+    test_params:
+      method: edm
+      nb_steps: 7
+      sigma_min: 0.002
+      sigma_max: 40
+      rho: 7
+      sde: false

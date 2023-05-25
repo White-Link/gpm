@@ -1,0 +1,96 @@
+# Copyright 2023 Jean-Yves Franceschi, Mike Gartrell, Ludovic Dos Santos, Thibaut Issenhuth, Emmanuel de Bézenac, Mickaël Chen, Alain Rakotomamonjy
+
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+
+#     http://www.apache.org/licenses/LICENSE-2.0
+
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
+model: score_gan
+model_params:
+  sigma_min: 0.1
+  sigma_max: 10
+  rho: 3
+  score_data:
+    name: mlp
+    sigma_min: 0.002
+    sigma_max: 40
+    sigma_data: 0.5
+    embedding: fourier
+    embedding_size: 128
+    width: 512
+    depth: 4
+    activation:
+      name: leaky_relu
+  path_score_data: '/path/to/score/model.pt'
+  latent_dim: 128
+  generator:
+    name: mlp
+    width: 512
+    depth: 4
+    activation:
+      name: relu
+  init_gen:
+    name: default
+  score_gen:
+    name: mlp
+    sigma_min: 0.002
+    sigma_max: 40
+    sigma_data: 0.5
+    embedding: fourier
+    embedding_size: 128
+    width: 512
+    depth: 4
+    activation:
+      name: leaky_relu
+  init_score:
+    name: default
+  nb_score_steps: 10
+
+dataset: gaussians
+dataset_params:
+  size: 500000
+  nb: 5
+  radius: 3
+  std: 0.5
+
+optim:
+  batch_size: 128
+  nb_steps: 31500
+  optimizers:
+    score_optimizer:
+      name: Adam
+      settings:
+        lr: 0.0002
+    gen_optimizer:
+      name: Adam
+      settings:
+        lr: 0.0002
+  schedulers: ~
+
+eval_freq: 4500
+eval:
+  - config_name: 'standard'
+    batch_size: 128
+    nb_steps: 1
+    nb_quali: 128
+    tests: ['gen_quali']
+    test_params:
+      sigma: 0.2
+save_best: false
+
+test:
+  - config_name: 'standard'
+    batch_size: 128
+    nb_steps: 1
+    nb_quali: 128
+    tests: ['gen_quali']
+    test_params:
+      sigma: 0.2
