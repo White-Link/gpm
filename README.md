@@ -17,6 +17,8 @@ limitations under the License. -->
 
 Official implementation of the paper *Unifying GANs and Score-Based Diffusion as Generative Particle Models* (Jean-Yves Franceschi, Mike Gartrell, Ludovic Dos Santos, Thibaut Issenhuth, Emmanuel de Bézenac, Mickaël Chen, Alain Rakotomamonjy).
 
+## [Preprint](https://arxiv.org/abs/2305.16150)
+
 ## [Animated Samples](https://jyfranceschi.fr/publications/gpm/)
 
 ![Discriminator Flow samples on MNIST](https://jyfranceschi.fr/wp-content/uploads/2023/05/discr_flow_mnist.webp)
