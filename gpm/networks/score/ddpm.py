@@ -1,4 +1,5 @@
-# Copyright (c) 2023 Jean-Yves Franceschi, Mike Gartrell, Ludovic Dos Santos, Thibaut Issenhuth, Emmanuel de Bézenac, Mickaël Chen, Alain Rakotomamonjy
+# Copyright (C) 2023 Jean-Yves Franceschi, Mike Gartrell, Ludovic Dos Santos, Thibaut Issenhuth, Emmanuel de Bézenac,
+# Mickaël Chen, Alain Rakotomamonjy
 #
 # This work is licensed under a Creative Commons
 # Attribution-NonCommercial-ShareAlike 4.0 International License.

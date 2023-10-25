@@ -1,4 +1,5 @@
-# Copyright 2023 Jean-Yves Franceschi, Mike Gartrell, Ludovic Dos Santos, Thibaut Issenhuth, Emmanuel de Bézenac, Mickaël Chen, Alain Rakotomamonjy
+# Copyright 2023 Jean-Yves Franceschi, Mike Gartrell, Ludovic Dos Santos, Thibaut Issenhuth, Emmanuel de Bézenac,
+# Mickaël Chen, Alain Rakotomamonjy
 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -75,3 +76,13 @@ def gen_quali(x: torch.Tensor, x_gen: torch.Tensor, nb_quali: int,
             ax.imshow(loss(grid).view(resolution, resolution).numpy().transpose(), origin='lower',
                       extent=scatter_extent, aspect='auto')
         return finalize_plot()
+
+
+def inter_quali(x: torch.Tensor, nb_quali: int) -> Image:
+    """
+    Creates a grid visualization of interpolated images (first input dimension: batch, second dimension: number of
+    interpolations).
+    """
+    assert len(x) > 0 and is_image(x[0])
+    return F.to_pil_image(torchvision.utils.make_grid(x[:nb_quali].flatten(end_dim=1), nrow=x.size(1), normalize=True,
+                                                      value_range=(-1, 1), pad_value=1))

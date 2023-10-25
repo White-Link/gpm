@@ -1,4 +1,5 @@
-# Copyright 2023 Jean-Yves Franceschi, Mike Gartrell, Ludovic Dos Santos, Thibaut Issenhuth, Emmanuel de Bézenac, Mickaël Chen, Alain Rakotomamonjy
+# Copyright 2023 Jean-Yves Franceschi, Mike Gartrell, Ludovic Dos Santos, Thibaut Issenhuth, Emmanuel de Bézenac,
+# Mickaël Chen, Alain Rakotomamonjy
 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -27,8 +28,9 @@ from typing import Iterator
 
 from gpm.data.lowd.base import BaseLowDDataset
 from gpm.data.image.base import BaseImageDataset
+from gpm.eval.interpolate import Interpolation, interpolate
 from gpm.eval.metrics import compute_fid
-from gpm.eval.quali import gen_quali
+from gpm.eval.quali import gen_quali, inter_quali
 from gpm.eval.tests import Test
 from gpm.models.base import BaseModel
 from gpm.models.gan.losses import GradPenalty, grad_penalty
@@ -42,7 +44,7 @@ from gpm.utils.optimizer import optimizer_update
 from gpm.utils.types import Batch, ForwardFn, Log, Optimizers, Scalers, Schedulers
 
 
-EvaluationTuple = tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
+EvaluationTuple = tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
 
 
 @enum.unique
@@ -100,9 +102,15 @@ class GANInferenceDict(DotDict):
 
     def __init__(self, *kargs, **kwargs):
         super().__init__(*kargs, **kwargs)
-        self.resolution: int  # Resolution of pointwise generator loss for qualitative tests on 2D data
+        # Resolution of pointwise generator loss for qualitative tests on 2D data, or number of interpolations
+        self.resolution: int
+        self.interpolation: Interpolation  # Interpolation method to use for qualitative interpolation tests
         if 'resolution' not in self:
             self.resolution = 200
+        if 'interpolation' in self:
+            self.interpolation = Interpolation(self.interpolation)
+        else:
+            self.interpolation = Interpolation.LINEAR
 
 
 class GAN(BaseModel):
@@ -168,12 +176,18 @@ class GAN(BaseModel):
         else:
             raise ValueError(f'No optimizer named `{optimizer_name}`')
 
-    def generate(self, nb_gen: int, device: torch.device, no_grad=False) -> torch.Tensor:
+    def sample_latent(self, nb_gen: int, device: torch.device) -> torch.Tensor:
+        """
+        Samples a batch of latent states.
+        """
+        return torch.normal(0, 1, (nb_gen, self.latent_dim), device=device)
+
+    def generate(self, nb_gen: int, device: torch.device, no_grad: bool = False) -> torch.Tensor:
         """
         Generates a given number of samples with the generator. Removes gradients if required.
         """
         with (torch.no_grad() if no_grad else nullcontext()):
-            z = torch.randn(nb_gen, self.latent_dim, device=device)
+            z = self.sample_latent(nb_gen, device)
             return self.generator(z)
 
     @abstractmethod
@@ -284,7 +298,17 @@ class GAN(BaseModel):
                 grads = - ft.grad(lambda x: self.generator_loss(x).sum())(fake)
         else:
             grads = torch.zeros_like(real)
-        return real, fake, gen_loss, grads
+        if Test.INTER_QUALI in config.tests:
+            # Interpolations in the prior
+            gen_params = GANInferenceDict(config.test_params)
+            z1 = self.sample_latent(len(real), device)
+            z2 = self.sample_latent(len(real), device)
+            interpolated_z = interpolate(z1, z2, gen_params.resolution, 1, gen_params.interpolation)
+            interpolated_z = interpolated_z.flatten(end_dim=1)
+            interpolations = self.generator(interpolated_z).view((len(real), gen_params.resolution) + real.size()[1:])
+        else:
+            interpolations = torch.zeros((len(real)))
+        return real, fake, gen_loss, grads, interpolations
 
     def evaluation_logs(self, eval_results: EvaluationTuple, device: torch.device, opt: ModelDict,
                         config: TestDict) -> tuple[float, Log]:
@@ -292,10 +316,10 @@ class GAN(BaseModel):
         If specified in the test configuration, computes the FID, creates sample images and/or saves the generated
         samples.
         """
-        real, fake, gen_loss, grad = eval_results
+        real, fake, gen_loss, grad, interpolations = eval_results
         gen_loss = gen_loss.mean().item()
 
-        fid, gen_grid = None, None
+        fid, gen_grid, inter_grid = None, None, None
         for test in config.tests:
             if test is Test.FID:
                 assert isinstance(self.dataset, BaseImageDataset)
@@ -309,6 +333,8 @@ class GAN(BaseModel):
                 gen_grid = gen_quali(real, fake, config.nb_quali, gradients=grad, scale_grad=3,
                                      loss=lambda grid: self.generator_loss(grid.to(device)).cpu(),
                                      resolution=gen_params.resolution)
+            elif test is Test.INTER_QUALI:
+                inter_grid = inter_quali(interpolations, config.nb_quali)
             elif test is not Test.GEN_SAVE:
                 raise ValueError(f'Test `{test}` not implemented yet.')
 
@@ -320,7 +346,11 @@ class GAN(BaseModel):
                 score = -fid
         if gen_grid is not None:
             logs['gen_quali'] = gen_grid
+        if inter_grid is not None:
+            logs['inter_quali'] = inter_grid
         if Test.GEN_SAVE in config.tests:
             logs['gen'] = fake
+            if inter_grid is not None:
+                logs['inter'] = interpolations
 
         return score if score is not None else -gen_loss, logs

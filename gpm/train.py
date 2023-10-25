@@ -1,4 +1,5 @@
-# Copyright 2023 Jean-Yves Franceschi, Mike Gartrell, Ludovic Dos Santos, Thibaut Issenhuth, Emmanuel de Bézenac, Mickaël Chen, Alain Rakotomamonjy
+# Copyright 2023 Jean-Yves Franceschi, Mike Gartrell, Ludovic Dos Santos, Thibaut Issenhuth, Emmanuel de Bézenac,
+# Mickaël Chen, Alain Rakotomamonjy
 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -113,8 +114,8 @@ def init_compute_env(opt: ModelDict) -> tuple[torch.device, random.Random, Logge
     return device, shared_rng, logger
 
 
-def load_data(opt: ModelDict) -> tuple[BaseDataset, DataLoader, tuple[DataLoader] | None, tuple[DataLoader] | None,
-                                       DistributedSampler | None]:
+def load_data(opt: ModelDict) -> tuple[BaseDataset, DataLoader, tuple[DataLoader, ...] | None,
+                                       tuple[DataLoader, ...] | None, DistributedSampler | None]:
     """
     Loads the training, validation and test data, creates their dataloaders and sets up a specific training data
     sampler for multi-GPU training. Returns the training dataset, respective dataloaders, and training sampler.
@@ -214,9 +215,10 @@ def build_optimizers(model: BaseModel, opt: ModelDict) -> tuple[Optimizers, Sche
     return optimizers, schedulers, scalers
 
 
-def setup(opt: ModelDict) -> tuple[torch.device, random.Random, Logger | None, DataLoader, tuple[DataLoader] | None,
-                                   tuple[DataLoader] | None, DistributedSampler | None, BaseModel, Optimizers,
-                                   Schedulers, Scalers, TrainingStep, ForwardFn, int]:
+def setup(opt: ModelDict) -> tuple[torch.device, random.Random, Logger | None, DataLoader,
+                                   tuple[DataLoader, ...] | None, tuple[DataLoader, ...] | None,
+                                   DistributedSampler | None, BaseModel, Optimizers, Schedulers, Scalers,
+                                   TrainingStep, ForwardFn, int]:
     """
     Instantiates all needed objects for training. Returns, among other things, the forward method of the model.
 
@@ -246,8 +248,8 @@ def setup(opt: ModelDict) -> tuple[torch.device, random.Random, Logger | None, D
             schedulers, scalers, training_step, forward_fn, step)
 
 
-def evaluate(opt: ModelDict, device: torch.device, val_loaders: tuple[DataLoader], model: BaseModel,
-             step: int, test: bool) -> tuple[float, Log]:
+def evaluate(opt: ModelDict, device: torch.device, val_loaders: tuple[DataLoader, ...], model: BaseModel, step: int,
+             test: bool) -> tuple[float, Log]:
     """
     Performs model evaluation on the provided dataloaders and returns corresponding logs. Retains the score of the last
     evaluation.
@@ -265,10 +267,10 @@ def evaluate(opt: ModelDict, device: torch.device, val_loaders: tuple[DataLoader
 
 
 def training_loop(opt: ModelDict, device: torch.device, shared_rng: random.Random, logger: Logger | None,
-                  train_loader: DataLoader, val_loaders: tuple[DataLoader] | None,
-                  test_loaders: tuple[DataLoader] | None, train_sampler: DistributedSampler | None, model: BaseModel,
-                  optimizers: Optimizers, schedulers: Schedulers, scalers: Scalers, training_step: TrainingStep,
-                  forward_fn: ForwardFn, step: int) -> int:
+                  train_loader: DataLoader, val_loaders: tuple[DataLoader, ...] | None,
+                  test_loaders: tuple[DataLoader, ...] | None, train_sampler: DistributedSampler | None,
+                  model: BaseModel, optimizers: Optimizers, schedulers: Schedulers, scalers: Scalers,
+                  training_step: TrainingStep, forward_fn: ForwardFn, step: int) -> int:
     """
     Trains, periodically validates, and finally tests the model.
     """
@@ -326,7 +328,7 @@ def training_loop(opt: ModelDict, device: torch.device, shared_rng: random.Rando
 
                 # Progress bar
                 if pb is not None:
-                    pb.set_postfix(**{v: log_train[v] for v in pb_vars if v in log_train}, val_score=score,
+                    pb.set_postfix({v: log_train[v] for v in pb_vars if v in log_train}, val_score=score,
                                    refresh=False)
                     pb.update()
 

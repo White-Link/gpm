@@ -1,4 +1,5 @@
-# Copyright 2023 Jean-Yves Franceschi, Mike Gartrell, Ludovic Dos Santos, Thibaut Issenhuth, Emmanuel de Bézenac, Mickaël Chen, Alain Rakotomamonjy
+# Copyright 2023 Jean-Yves Franceschi, Mike Gartrell, Ludovic Dos Santos, Thibaut Issenhuth, Emmanuel de Bézenac,
+# Mickaël Chen, Alain Rakotomamonjy
 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -24,17 +25,17 @@ from gpm.data.lowd.gaussians import GaussiansDataset, GaussiansParamsDict
 from gpm.utils.config import ModelDict
 
 
-def dataset_factory_train_val(opt: ModelDict, seed: int) -> tuple[BaseDataset, tuple[BaseDataset]]:
+def dataset_factory_train_val(opt: ModelDict, seed: int) -> tuple[BaseDataset, tuple[BaseDataset, ...]]:
     """
     Returns the training set and the validation sets for the chosen dataset.
 
     The input seed serves as a common RNG initialization to split training dataset into training and validation sets
     for datasets like MNIST which do not come with their precomputed validation set.
     """
+    val_sets: list[BaseDataset] = []
     if opt.dataset is Dataset.MNIST:
         opt.dataset_params = MNISTParamsDict(opt.dataset_params)
         train_set = MNIST(opt.data_path, Split.TRAIN, opt.dataset_params.ratio_val, seed=seed)
-        val_sets = []
         for eval_config in opt.eval:
             val_params = eval_config.dataset_params
             if val_params is None:
@@ -46,7 +47,6 @@ def dataset_factory_train_val(opt: ModelDict, seed: int) -> tuple[BaseDataset, t
     elif opt.dataset is Dataset.CELEBA:
         opt.dataset_params = CelebAParamsDict(opt.dataset_params)
         train_set = CelebA(opt.data_path, Split.TRAIN, opt.dataset_params.image_size)
-        val_sets = []
         for eval_config in opt.eval:
             val_params = eval_config.dataset_params
             if val_params is None:
@@ -57,7 +57,6 @@ def dataset_factory_train_val(opt: ModelDict, seed: int) -> tuple[BaseDataset, t
     elif opt.dataset is Dataset.GAUSSIANS:
         opt.dataset_params = GaussiansParamsDict(opt.dataset_params)
         train_set = GaussiansDataset(opt.data_path, Split.TRAIN, opt.dataset_params)
-        val_sets = []
         for eval_config in opt.eval:
             val_params = eval_config.dataset_params
             if val_params is None:
@@ -70,11 +69,11 @@ def dataset_factory_train_val(opt: ModelDict, seed: int) -> tuple[BaseDataset, t
     return train_set, tuple(val_sets)
 
 
-def dataset_factory_test(opt: ModelDict) -> tuple[BaseDataset]:
+def dataset_factory_test(opt: ModelDict) -> tuple[BaseDataset, ...]:
     """
     Returns the testing sets for the chosen dataset.
     """
-    test_sets = []
+    test_sets: list[BaseDataset] = []
     for test_config in opt.test:
         test_params = test_config.dataset_params
         if opt.dataset is Dataset.MNIST:

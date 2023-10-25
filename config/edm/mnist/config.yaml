@@ -1,4 +1,5 @@
-# Copyright 2023 Jean-Yves Franceschi, Mike Gartrell, Ludovic Dos Santos, Thibaut Issenhuth, Emmanuel de Bézenac, Mickaël Chen, Alain Rakotomamonjy
+# Copyright 2023 Jean-Yves Franceschi, Mike Gartrell, Ludovic Dos Santos, Thibaut Issenhuth, Emmanuel de Bézenac,
+# Mickaël Chen, Alain Rakotomamonjy
 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -71,7 +72,7 @@ test:
     tests: ['fid', 'gen_quali']
     test_params:
       method: edm
-      nb_steps: 25
+      nb_steps: 32
       sigma_min: 0.002
       sigma_max: 40
       rho: 7

@@ -1,4 +1,5 @@
-# Copyright 2023 Jean-Yves Franceschi, Mike Gartrell, Ludovic Dos Santos, Thibaut Issenhuth, Emmanuel de Bézenac, Mickaël Chen, Alain Rakotomamonjy
+# Copyright 2023 Jean-Yves Franceschi, Mike Gartrell, Ludovic Dos Santos, Thibaut Issenhuth, Emmanuel de Bézenac,
+# Mickaël Chen, Alain Rakotomamonjy
 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -25,8 +26,9 @@ from typing import Any, Iterator
 
 from gpm.data.image.base import BaseImageDataset
 from gpm.data.lowd.base import BaseLowDDataset
+from gpm.eval.interpolate import Interpolation, interpolate
 from gpm.eval.metrics import compute_fid
-from gpm.eval.quali import gen_quali
+from gpm.eval.quali import gen_quali, inter_quali
 from gpm.eval.tests import Test
 from gpm.models.base import BaseModel
 from gpm.networks.factory import edm_denoiser_factory
@@ -38,7 +40,7 @@ from gpm.utils.optimizer import optimizer_update
 from gpm.utils.types import Batch, ForwardFn, Log, Optimizers, Scalers, Schedulers
 
 
-EvaluationTuple = tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
+EvaluationTuple = tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
 SolverTuple = tuple[torch.Tensor, torch.Tensor, torch.Tensor]
 
 
@@ -69,13 +71,24 @@ class EDMInferenceDict(DotDict):
     def __init__(self, *kargs, **kwargs):
         super().__init__(*kargs, **kwargs)
         assert {'method', 'nb_steps', 'sigma_min', 'sigma_max', 'rho', 'sde'}.issubset(self.keys())
-        self.method: EDM.Inference = EDM.Inference(self.method)  #  Choice of sampler (Euler or Heun/EDM solver)
+        self.method: EDM.Inference = EDM.Inference(self.method)  # Choice of sampler (Euler or Heun/EDM solver)
         self.nb_steps: int  # Number of steps in the solver
         self.sde: bool  # Whether to use stochastic or deterministic sampling
         # Noise scheduling parameters, cf. the EDM paper
         self.sigma_min: float
         self.sigma_max: float
         self.rho: float
+        self.total_nb_steps: int  # Number of discretization steps (default, nb_steps, otherwise it will early stop)
+        if 'total_nb_steps' not in self:
+            self.total_nb_steps = self.nb_steps
+        self.resolution: int  # Number of interpolations
+        self.interpolation: Interpolation  # Interpolation method to use for qualitative interpolation tests
+        if 'resolution' not in self:
+            self.resolution = 10
+        if 'interpolation' in self:
+            self.interpolation = Interpolation(self.interpolation)
+        else:
+            self.interpolation = Interpolation.LINEAR
 
 
 class EDMHeunInferenceDict(EDMInferenceDict):
@@ -150,65 +163,88 @@ class EDM(BaseModel):
                  * (sigma_min ** (1 / rho) - sigma_max ** (1 / rho))) ** rho
         return torch.cat([steps, torch.zeros_like(steps[:1])])
 
-    def sde_generate_like(self, x: torch.Tensor, nb_steps: int, sigma_min: float, sigma_max: float, rho: float,
-                          sde: bool, return_intermediate: bool = False) -> SolverTuple:
+    @classmethod
+    def sample_latent_like(cls, x: torch.Tensor, sigma_max: float) -> torch.Tensor:
         """
-        SDE sampler. Returns both the generated output and the gradients it receives.
+        Samples an initial particle of the same shape as the input.
+        """
+        return torch.normal(0, sigma_max, x.size(), device=x.device)
+
+    def sde_generate_like(self, x: torch.Tensor, nb_steps: int, sigma_min: float, sigma_max: float, rho: float,
+                          sde: bool, total_nb_steps: int | None = None, z_0: torch.Tensor | None = None,
+                          return_intermediate: bool = False) -> SolverTuple:
+        """
+        SDE sampler. Applies the given number of discretization steps, provided the overall discretization level. Uses
+        the input initial particles if provided, otherwise samples them. Returns both the generated output and the
+        gradients it receives.
 
         If required, returns all intermediary results.
         """
+        if total_nb_steps is None:
+            total_nb_steps = nb_steps
         sigma_min = max(sigma_min, self.denoiser.sigma_min)
         sigma_max = min(sigma_max, self.denoiser.sigma_max)
         z = []
         drift = []
         diffusion = []
-        z_t = torch.normal(0, sigma_max, x.size(), device=x.device)  # Initial sample from the prior
-        steps = self.sample_steps(nb_steps, sigma_min, sigma_max, rho, x.device)  # Selection of times
+        steps = self.sample_steps(total_nb_steps, sigma_min, sigma_max, rho, x.device)  # Selection of times
+        z_t = self.sample_latent_like(x, sigma_max) if z_0 is None else z_0  # Initial sample from the prior
         for k, (t_cur, t_next) in enumerate(zip(steps[:-1], steps[1:])):
             if return_intermediate:
                 z.append(z_t)
             # One Euler step
             z_t, drift_t, diffusion_t = self.sde_update_step(z_t, t_cur.unsqueeze(0).expand(len(z_t)),
-                                                             (t_next - t_cur).item(), not sde or k == nb_steps - 1)
+                                                             (t_next - t_cur).item(),
+                                                             not sde or k == total_nb_steps - 1)
             if return_intermediate:
                 drift.append(drift_t)
                 diffusion.append(diffusion_t)
+            if k == nb_steps - 1:
+                break
         if return_intermediate:
             z.append(z_t)
             return torch.stack(z, dim=1), torch.stack(drift, dim=1), torch.stack(diffusion, dim=1)
         else:
-            return z_t, *([torch.zeros_like(z_t)] * 2)
+            return z_t, torch.zeros_like(z_t), torch.zeros_like(z_t)
 
     def edm_generate_like(self, x: torch.Tensor, nb_steps: int, sigma_min: float, sigma_max: float, rho: float,
                           S_churn: float, S_min: float, S_max: float, S_noise: float, sde: bool,
+                          total_nb_steps: int | None = None, z_0: torch.Tensor | None = None,
                           return_intermediate: bool = False) -> SolverTuple:
         """
-        EDM / Heun sampler. Returns both the generated output and the gradients it receives.
+        EDM / Heun sampler. Applies the given number of discretization steps, provided the overall discretization
+        level. Uses the input initial particles if provided, otherwise samples them. Returns both the generated output
+        and the gradients it receives.
 
         If required, returns all intermediary results.
         """
+        if total_nb_steps is None:
+            total_nb_steps = nb_steps
         sigma_min = max(sigma_min, self.denoiser.sigma_min)
         sigma_max = min(sigma_max, self.denoiser.sigma_max)
         z = []
         drift = []
         diffusion = []
-        z_t = torch.normal(0, sigma_max, x.size(), device=x.device)  # Initial sample from the prior
-        steps = self.sample_steps(nb_steps, sigma_min, sigma_max, rho, x.device)  # Selection of times
+        z_t = self.sample_latent_like(x, sigma_max) if z_0 is None else z_0  # Initial sample from the prior
+        steps = self.sample_steps(total_nb_steps, sigma_min, sigma_max, rho, x.device)  # Selection of times
         for k, (t_cur, t_next) in enumerate(zip(steps[:-1], steps[1:])):
             if return_intermediate:
                 z.append(z_t)
             # One Heun step
             z_t, drift_t, diffusion_t = self.edm_update_step(z_t, t_cur.unsqueeze(0).expand(len(z_t)),
                                                              t_next.unsqueeze(0).expand(len(z_t)), S_churn, S_min,
-                                                             S_max, S_noise, nb_steps, k == nb_steps - 1, not sde)
+                                                             S_max, S_noise, total_nb_steps, k == total_nb_steps - 1,
+                                                             not sde)
             if return_intermediate:
                 drift.append(drift_t)
                 diffusion.append(diffusion_t)
+            if k == nb_steps - 1:
+                break
         if return_intermediate:
             z.append(z_t)
             return torch.stack(z, dim=1), torch.stack(drift, dim=1), torch.stack(diffusion, dim=1)
         else:
-            return z_t, *([torch.zeros_like(z_t)] * 2)
+            return z_t, torch.zeros_like(z_t), torch.zeros_like(z_t)
 
     def sde_update_step(self, x: torch.Tensor, t: torch.Tensor, delta: float, deterministic: bool) -> SolverTuple:
         """
@@ -260,7 +296,7 @@ class EDM(BaseModel):
             d_prime = (x_next - self.denoiser(x_next, t_next)) / fill_as(t_next, x_next)
             drift_2 = fill_as(t_next - t_hat, x_hat) * (d_cur + d_prime) / 2
             x_next = x_hat + drift_2
-            drift += drift_2
+            drift = drift_2
 
         return x_next, drift, diffusion
 
@@ -292,6 +328,23 @@ class EDM(BaseModel):
         loss = loss.item()
         return loss, {'loss': loss}, ['loss']
 
+    def inference(self, x: torch.Tensor, gen_params: EDMInferenceDict, return_intermediate: bool,
+                  z_0: torch.Tensor | None = None) -> SolverTuple:
+        nb_steps = gen_params.nb_steps
+        sigma_min = gen_params.sigma_min
+        sigma_max = gen_params.sigma_max
+        rho = gen_params.rho
+        if gen_params.method is EDM.Inference.Euler:
+            return self.sde_generate_like(x, nb_steps, sigma_min, sigma_max, rho, gen_params.sde, z_0=z_0,
+                                          return_intermediate=return_intermediate)
+        elif gen_params.method is EDM.Inference.EDM:
+            gen_params = EDMHeunInferenceDict(gen_params)
+            return self.edm_generate_like(x, nb_steps, sigma_min, sigma_max, rho, gen_params.S_churn, gen_params.S_min,
+                                          gen_params.S_max, gen_params.S_noise, gen_params.sde, z_0=z_0,
+                                          return_intermediate=return_intermediate)
+        else:
+            raise ValueError(f'Inference method `{gen_params.method}` not implemented yet.')
+
     def evaluation_step(self, batch: Batch, device: torch.device, opt: ModelDict, config: TestDict) -> EvaluationTuple:
         """
         Generates samples following the inference configuration.
@@ -299,23 +352,21 @@ class EDM(BaseModel):
         x = batch.x.to(device)
         score_loss, = self.forward(x, None)
         gen_params = EDMInferenceDict(config.test_params)
-        nb_steps = gen_params.nb_steps
-        sigma_min = gen_params.sigma_min
-        sigma_max = gen_params.sigma_max
-        rho = gen_params.rho
         return_intermediate = Test.GEN_QUALI in config.tests
-        if gen_params.method is EDM.Inference.Euler:
-            x_gen, drift, diffusion = self.sde_generate_like(x, nb_steps, sigma_min, sigma_max, rho, gen_params.sde,
-                                                             return_intermediate=return_intermediate)
-        elif gen_params.method is EDM.Inference.EDM:
-            gen_params = EDMHeunInferenceDict(gen_params)
-            x_gen, drift, diffusion = self.edm_generate_like(x, nb_steps, sigma_min, sigma_max, rho,
-                                                             gen_params.S_churn, gen_params.S_min, gen_params.S_max,
-                                                             gen_params.S_noise, gen_params.sde,
-                                                             return_intermediate=return_intermediate)
+        x_gen, drift, diffusion = self.inference(x, gen_params, return_intermediate)
+        if Test.INTER_QUALI in config.tests:
+            # Interpolations in the prior
+            sigma_max = gen_params.sigma_max
+            z1 = self.sample_latent_like(x, sigma_max)
+            z2 = self.sample_latent_like(x, sigma_max)
+            interpolated_z = interpolate(z1 / sigma_max, z2 / sigma_max,
+                                         gen_params.resolution, 1, gen_params.interpolation) * sigma_max
+            interpolated_z = interpolated_z.flatten(end_dim=1)
+            interpolations = self.inference(x, gen_params, True, z_0=interpolated_z)[0]
+            interpolations = interpolations.view((len(x), gen_params.resolution) + interpolations.size()[1:])
         else:
-            raise ValueError(f'Inference method `{gen_params.method}` not implemented yet.')
-        return x, x_gen, drift, diffusion, score_loss
+            interpolations = torch.zeros((len(x)))
+        return x, x_gen, drift, diffusion, score_loss, interpolations
 
     def evaluation_logs(self, eval_results: EvaluationTuple, device: torch.device, opt: ModelDict,
                         config: TestDict) -> tuple[float, Log]:
@@ -323,10 +374,10 @@ class EDM(BaseModel):
         If specified in the test configuration, computes the FID, creates sample images and/or saves the generated
         samples.
         """
-        x, x_gen, drift, diffusion, score_loss = eval_results
+        x, x_gen, drift, diffusion, score_loss, interpolations = eval_results
         score_loss = score_loss.mean().item()
 
-        fid, gen_grid = None, None
+        fid, gen_grid, inter_grid = None, None, None
         for test in config.tests:
             if test is Test.GEN_QUALI:
                 grad_norm = torch.linalg.norm((drift + diffusion).flatten(start_dim=2), dim=2).mean().item() / 2
@@ -339,6 +390,9 @@ class EDM(BaseModel):
                 assert isinstance(self.dataset, BaseImageDataset)
                 fid = compute_fid(x, x_gen if Test.GEN_QUALI not in config.tests else x_gen[:, -1], config.batch_size,
                                   device)
+            elif test is Test.INTER_QUALI:
+                inter_grid = [inter_quali(interpolations[:, :, i],
+                                          config.nb_quali) for i in range(interpolations.size(2))]
             elif test is not Test.GEN_SAVE:
                 raise ValueError(f'Test `{test}` not implemented yet.')
 
@@ -350,7 +404,11 @@ class EDM(BaseModel):
                 score = -fid
         if gen_grid is not None:
             logs['gen_quali'] = gen_grid
+        if inter_grid is not None:
+            logs['inter_quali'] = inter_grid
         if Test.GEN_SAVE in config.tests:
             logs['gen'] = x_gen
+            if inter_grid is not None:
+                logs['inter'] = interpolations
 
         return score if score is not None else -score_loss, logs

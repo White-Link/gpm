@@ -1,4 +1,5 @@
-# Copyright 2023 Jean-Yves Franceschi, Mike Gartrell, Ludovic Dos Santos, Thibaut Issenhuth, Emmanuel de Bézenac, Mickaël Chen, Alain Rakotomamonjy
+# Copyright 2023 Jean-Yves Franceschi, Mike Gartrell, Ludovic Dos Santos, Thibaut Issenhuth, Emmanuel de Bézenac,
+# Mickaël Chen, Alain Rakotomamonjy
 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -41,8 +42,9 @@ def create_args(seed: bool = True) -> argparse.ArgumentParser:
     Creates and returns the argument parser of the training program.
     """
     p = argparse.ArgumentParser(
-        prog='GAN Gradient Flows',
-        description='GAN Gradient Flows',
+        prog='Generative Particle Models',
+        description='Official implementation of the paper "Unifying GANs and Score-Based Diffusion as Generative'
+                    + ' Particle Models" (NeurIPS 2023)',
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
 

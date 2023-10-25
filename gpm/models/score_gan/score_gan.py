@@ -1,4 +1,5 @@
-# Copyright 2023 Jean-Yves Franceschi, Mike Gartrell, Ludovic Dos Santos, Thibaut Issenhuth, Emmanuel de Bézenac, Mickaël Chen, Alain Rakotomamonjy
+# Copyright 2023 Jean-Yves Franceschi, Mike Gartrell, Ludovic Dos Santos, Thibaut Issenhuth, Emmanuel de Bézenac,
+# Mickaël Chen, Alain Rakotomamonjy
 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -25,8 +26,9 @@ from typing import Iterator
 from gpm.data.image.base import BaseImageDataset
 
 from gpm.data.lowd.base import BaseLowDDataset
+from gpm.eval.interpolate import Interpolation, interpolate
 from gpm.eval.metrics import compute_fid
-from gpm.eval.quali import gen_quali
+from gpm.eval.quali import gen_quali, inter_quali
 from gpm.eval.tests import Test
 from gpm.models.base import BaseModel
 from gpm.networks.factory import decoder_factory, edm_denoiser_factory
@@ -38,7 +40,8 @@ from gpm.utils.optimizer import optimizer_update
 from gpm.utils.types import Batch, ForwardFn, Log, Optimizers, Scalers, Schedulers
 
 
-EvaluationTuple = tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor | None]
+EvaluationTuple = tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor,
+                        torch.Tensor]
 
 
 class ScoreGANDict(DotDict):
@@ -50,15 +53,18 @@ class ScoreGANDict(DotDict):
         super().__init__(*kargs, **kwargs)
         assert {'sigma_min', 'sigma_max', 'rho', 'score_data', 'path_score_data', 'latent_dim', 'generator',
                 'init_gen', 'score_gen', 'init_score', 'nb_score_steps'}.issubset(self.keys())
-        self.score_data: EDMDenoiserDict = EDMDenoiserDict(self.score_data)  # Architecture of the score network for the data distribution
+        # Architecture of the score network for the data distribution
+        self.score_data: EDMDenoiserDict = EDMDenoiserDict(self.score_data)
         # Path to the saved score network for the data distribution, must comply with the provided parameters
         self.path_score_data: str
-        self.score_gen: EDMDenoiserDict = EDMDenoiserDict(self.score_gen)  # Architecture of the score network for the generated distribution
+        # Architecture of the score network for the generated distribution
+        self.score_gen: EDMDenoiserDict = EDMDenoiserDict(self.score_gen)
         self.init_score: InitDict = InitDict(self.init_score)  # Initialization of the score network
         self.latent_dim: int  # Dimensionality of the generator's latent space
         self.generator: DecoderDict = DecoderDict(self.generator)  # Generator architecture
         self.init_gen: InitDict = InitDict(self.init_gen)  # Generator initialization parameters
-        self.nb_score_steps: int # Number of score optimization steps in-between generator updates
+        # Number of score optimization steps in-between generator updates
+        self.nb_score_steps: int
         # Noise sampling parameters, cf. the paper. Identical to the EDM inference noise scheduling.
         self.sigma_min: float
         self.sigma_max: float
@@ -86,8 +92,16 @@ class ScoreGANInferenceDict(DotDict):
     def __init__(self, *kargs, **kwargs):
         super().__init__(*kargs, **kwargs)
         self.sigma: float  # Standard deviation of noise to add to the data for vizualization purposes
+        self.resolution: int  # Number of interpolations
+        self.interpolation: Interpolation  # Interpolation method to use for qualitative interpolation tests
         if 'sigma' not in self:
             self.sigma = 0.5
+        if 'resolution' not in self:
+            self.resolution = 20
+        if 'interpolation' in self:
+            self.interpolation = Interpolation(self.interpolation)
+        else:
+            self.interpolation = Interpolation.LINEAR
 
 
 class ScoreGAN(BaseModel):
@@ -168,13 +182,19 @@ class ScoreGAN(BaseModel):
         return (self.sigma_max ** (1 / self.rho)
                 + t * (self.sigma_min ** (1 / self.rho) - self.sigma_max ** (1 / self.rho))) ** self.rho
 
-    def network_generate(self, nb_gen: int, device: torch.device, no_grad=False) -> torch.Tensor:
+    def sample_latent(self, nb_gen: int, device: torch.device) -> torch.Tensor:
+        """
+        Samples a batch of latent states.
+        """
+        return torch.normal(0, 1, (nb_gen, self.latent_dim), device=device)
+
+    def network_generate(self, nb_gen: int, device: torch.device, no_grad: bool = False) -> torch.Tensor:
         """
         Generates a given number of samples with the generator. Removes gradients if required.
         """
         with (torch.no_grad() if no_grad else nullcontext()):
-            z = torch.normal(0, 1, (nb_gen, self.latent_dim), device=device)
-        return self.generator(z)
+            z = self.sample_latent(nb_gen, device)
+            return self.generator(z)
 
     @classmethod
     def training_step(cls, step: int, batch: Batch, forward_fn: ForwardFn, optimizers: Optimizers, scalers: Scalers,
@@ -279,12 +299,22 @@ class ScoreGAN(BaseModel):
         Generates fake data and computes their corresponding gradients for a given noise level.
         """
         x = batch.x.to(device)
-        sigma = ScoreGANInferenceDict(config.test_params).sigma
+        gen_params = ScoreGANInferenceDict(config.test_params)
+        sigma = gen_params.sigma
         noise = torch.normal(0, 1, x.size(), device=x.device)
         x_noise = x + noise * sigma
         _, x_gen, x_gen_noise, score_data, diffusion = self.forward_generator(x, torch.tensor([sigma] * len(x),
                                                                                               device=x.device))
-        return x, x_noise, x_gen, x_gen_noise, score_data, diffusion
+        if Test.INTER_QUALI in config.tests:
+            # Interpolations in the prior
+            z1 = self.sample_latent(len(x), device)
+            z2 = self.sample_latent(len(x), device)
+            interpolated_z = interpolate(z1, z2, gen_params.resolution, 1, gen_params.interpolation)
+            interpolated_z = interpolated_z.flatten(end_dim=1)
+            interpolations = self.generator(interpolated_z).view((len(x), gen_params.resolution) + x.size()[1:])
+        else:
+            interpolations = torch.zeros((len(x)))
+        return x, x_noise, x_gen, x_gen_noise, score_data, diffusion, interpolations
 
     def evaluation_logs(self, eval_results: EvaluationTuple, device: torch.device, opt: ModelDict,
                         config: TestDict) -> tuple[float, Log]:
@@ -292,9 +322,9 @@ class ScoreGAN(BaseModel):
         If specified in the test configuration, computes the FID, creates sample images and/or saves the generated
         samples.
         """
-        x, x_noise, x_gen, x_gen_noise, gradient1, gradient2 = eval_results
+        x, x_noise, x_gen, x_gen_noise, gradient1, gradient2, interpolations = eval_results
 
-        fid, gen_grid, gen_grid_noise = None, None, None
+        fid, gen_grid, gen_grid_noise, inter_grid = None, None, None, None
         for test in config.tests:
             if test is Test.GEN_QUALI:
                 grad_norm = torch.linalg.norm((gradient1 + gradient2).flatten(start_dim=1), dim=1).mean().item() / 2
@@ -303,6 +333,8 @@ class ScoreGAN(BaseModel):
                 gen_grid_noise = gen_quali(x, x_gen_noise, config.nb_quali, gradients=[gradient1, gradient2],
                                            scale_grad=5)
                 gen_grid = gen_quali(x, x_gen, config.nb_quali)
+            elif test is Test.INTER_QUALI:
+                inter_grid = inter_quali(interpolations, config.nb_quali)
             elif test is Test.FID:
                 assert isinstance(self.dataset, BaseImageDataset)
                 fid = compute_fid(x, x_gen, config.batch_size, device)
@@ -318,7 +350,11 @@ class ScoreGAN(BaseModel):
         if gen_grid is not None and gen_grid_noise is not None:
             logs['gen_quali'] = gen_grid
             logs['gen_noise'] = gen_grid_noise
+        if inter_grid is not None:
+            logs['inter_quali'] = inter_grid
         if Test.GEN_SAVE in config.tests:
             logs['gen'] = x_gen
+            if inter_grid is not None:
+                logs['inter'] = interpolations
 
         return score if score is not None else 0, logs

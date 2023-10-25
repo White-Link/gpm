@@ -1,4 +1,5 @@
-# Copyright 2023 Jean-Yves Franceschi, Mike Gartrell, Ludovic Dos Santos, Thibaut Issenhuth, Emmanuel de Bézenac, Mickaël Chen, Alain Rakotomamonjy
+# Copyright 2023 Jean-Yves Franceschi, Mike Gartrell, Ludovic Dos Santos, Thibaut Issenhuth, Emmanuel de Bézenac,
+# Mickaël Chen, Alain Rakotomamonjy
 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -22,6 +23,7 @@ class Test(str, enum.Enum):
     FID = 'fid'  # FID
     GEN_SAVE = 'gen_save'  # Saves generated images in a Tensor file
     GEN_QUALI = 'gen_quali'  # Saves some generated images in a (A)PNG file.
+    INTER_QUALI = 'inter_quali'  # Saves interpolation of generated images in a (A)PNG file.
 
 
 quanti_test = [Test.FID]

@@ -1,4 +1,5 @@
-# Copyright 2023 Jean-Yves Franceschi, Mike Gartrell, Ludovic Dos Santos, Thibaut Issenhuth, Emmanuel de Bézenac, Mickaël Chen, Alain Rakotomamonjy
+# Copyright 2023 Jean-Yves Franceschi, Mike Gartrell, Ludovic Dos Santos, Thibaut Issenhuth, Emmanuel de Bézenac,
+# Mickaël Chen, Alain Rakotomamonjy
 
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -25,8 +26,9 @@ from typing import Any, Callable, Iterator, Sequence
 
 from gpm.data.image.base import BaseImageDataset
 from gpm.data.lowd.base import BaseLowDDataset
+from gpm.eval.interpolate import Interpolation, interpolate
 from gpm.eval.metrics import compute_fid
-from gpm.eval.quali import gen_quali
+from gpm.eval.quali import gen_quali, inter_quali
 from gpm.eval.tests import Test
 from gpm.models.base import BaseModel
 from gpm.models.gan.base import GANModel
@@ -42,7 +44,7 @@ from gpm.utils.optimizer import optimizer_update
 from gpm.utils.types import Batch, ForwardFn, Log, Optimizers, Scalers, Schedulers
 
 
-EvaluationTuple = tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
+EvaluationTuple = tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
 
 
 class DiscrFlowDict(DotDict):
@@ -114,9 +116,15 @@ class DiscrFlowInferenceDict(DotDict):
         self.total_nb_steps: int  # Number of discretization steps (default, nb_steps)
         if 'total_nb_steps' not in self:
             self.total_nb_steps = self.nb_steps
-        self.resolution: int  # Resolution of pointwise generator loss for qualitative tests on 2D data
+        # Resolution of pointwise generator loss for qualitative tests on 2D data, or number of interpolations
+        self.resolution: int
         if 'resolution' not in self:
             self.resolution = 200
+        self.interpolation: Interpolation  # Interpolation method to use for qualitative interpolation tests
+        if 'interpolation' in self:
+            self.interpolation = Interpolation(self.interpolation)
+        else:
+            self.interpolation = Interpolation.LINEAR
 
 
 class DiscrFlow(BaseModel):
@@ -216,13 +224,20 @@ class DiscrFlow(BaseModel):
         """
         return -ft.grad(lambda x0: self.gen_loss(x0, t).sum())(x)
 
+    def sample_latent_like(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Samples an initial particle of the same shape as the input.
+        """
+        return self.p_mean + self.p_std * torch.randn_like(x)
+
     @torch.inference_mode(mode=False)
     @torch.no_grad()
     def partial_generate_like(self, x: torch.Tensor, nb_steps: int, total_nb_steps: int | None = None,
+                              z_0: torch.Tensor | None = None,
                               return_intermediate: bool = False) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Generation function. Applied the given number of discretization steps, provided the overall discretization
-        level.
+        Generation function. Applies the given number of discretization steps, provided the overall discretization
+        level. Uses the input initial particles if provided, otherwise samples them.
 
         Returns the resulting synthesized data, the current gradients and times. Also returns the intermediate results
         if requested.
@@ -230,10 +245,10 @@ class DiscrFlow(BaseModel):
         if total_nb_steps is None:
             total_nb_steps = self.nb_steps
         # Discretization times
-        times = (torch.arange(nb_steps, device=x.device) / total_nb_steps).unsqueeze(-1).expand((-1, len(x)))
         z = []
         grad = []
-        z_t = self.p_mean + self.p_std * torch.randn_like(x)  # Initial samples from the prior \pi
+        z_t = self.sample_latent_like(x) if z_0 is None else z_0  # Initial samples from the prior \pi
+        times = (torch.arange(nb_steps, device=x.device) / total_nb_steps).unsqueeze(-1).expand((-1, len(z_t)))
         grad_t = None
         # Generation loop
         for step, t in enumerate(times):
@@ -242,7 +257,7 @@ class DiscrFlow(BaseModel):
                 z.append(z_t)
                 grad.append(grad_t)
             # Adds noise if requested
-            if step < len(times) - 1:
+            if step < total_nb_steps - 1:
                 diffusion = math.sqrt(self.entropy_reg / total_nb_steps) * torch.randn_like(z_t)
             else:
                 diffusion = torch.zeros_like(z_t)
@@ -311,7 +326,20 @@ class DiscrFlow(BaseModel):
         gen_params = DiscrFlowInferenceDict(config.test_params)
         x_gen, grad, t = self.partial_generate_like(x, gen_params.nb_steps, total_nb_steps=gen_params.total_nb_steps,
                                                     return_intermediate=Test.GEN_QUALI in config.tests)
-        return x, x_gen, grad, t
+        if Test.INTER_QUALI in config.tests:
+            # Interpolations in the prior
+            z1 = self.sample_latent_like(x)
+            z2 = self.sample_latent_like(x)
+            interpolated_z = interpolate((z1 - self.p_mean) / self.p_std, (z2 - self.p_mean) / self.p_std,
+                                         gen_params.resolution, 1, gen_params.interpolation) * self.p_std + self.p_mean
+            interpolated_z = interpolated_z.flatten(end_dim=1)
+            interpolations = self.partial_generate_like(x, gen_params.nb_steps,
+                                                        total_nb_steps=gen_params.total_nb_steps,
+                                                        z_0=interpolated_z, return_intermediate=True)[0]
+            interpolations = interpolations.view((len(x), gen_params.resolution) + interpolations.size()[1:])
+        else:
+            interpolations = torch.zeros((len(x)))
+        return x, x_gen, grad, t, interpolations
 
     def evaluation_logs(self, eval_results: EvaluationTuple, device: torch.device, opt: ModelDict,
                         config: TestDict) -> tuple[float, Log]:
@@ -319,9 +347,9 @@ class DiscrFlow(BaseModel):
         If specified in the test configuration, computes the FID, creates sample images and/or saves the generated
         samples.
         """
-        x, x_gen, grad, t = eval_results
+        x, x_gen, grad, t, interpolations = eval_results
 
-        fid, gen_grid, grad_mean = None, None, None
+        fid, gen_grid, grad_mean, inter_grid = None, None, None, None
         for test in config.tests:
             if test is Test.GEN_QUALI:
                 gen_params = DiscrFlowInferenceDict(config.test_params)
@@ -338,6 +366,9 @@ class DiscrFlow(BaseModel):
                 assert isinstance(self.dataset, BaseImageDataset)
                 fid = compute_fid(x, x_gen if Test.GEN_QUALI not in config.tests else x_gen[:, -1], config.batch_size,
                                   device)
+            elif test is Test.INTER_QUALI:
+                inter_grid = [inter_quali(interpolations[:, :, i],
+                                          config.nb_quali) for i in range(interpolations.size(2))]
             elif test is not Test.GEN_SAVE:
                 raise ValueError(f'Test `{test}` not implemented yet.')
 
@@ -351,7 +382,11 @@ class DiscrFlow(BaseModel):
             logs['gen_quali'] = gen_grid
         if grad_mean is not None:
             logs['grad_mean'] = grad_mean
+        if inter_grid is not None:
+            logs['inter_quali'] = inter_grid
         if Test.GEN_SAVE in config.tests:
             logs['gen'] = x_gen
+            if inter_grid is not None:
+                logs['inter'] = interpolations
 
         return score if score is not None else 0., logs
