@@ -17,6 +17,8 @@ limitations under the License. -->
 
 Official implementation of the paper *Unifying GANs and Score-Based Diffusion as Generative Particle Models* (Jean-Yves Franceschi, Mike Gartrell, Ludovic Dos Santos, Thibaut Issenhuth, Emmanuel de Bézenac, Mickaël Chen, Alain Rakotomamonjy), to appear at NeurIPS 2023.
 
+## [Article](https://openreview.net/forum?id=HMhEFKDQ6J)
+
 ## [Preprint](https://arxiv.org/abs/2305.16150)
 
 ## [Animated Samples](https://jyfranceschi.fr/publications/gpm/)
