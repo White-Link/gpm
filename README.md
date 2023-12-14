@@ -27,6 +27,10 @@ Official implementation of the paper *Unifying GANs and Score-Based Diffusion as
 
 ![Discriminator Flow samples on Gaussians](https://jyfranceschi.fr/wp-content/uploads/2023/05/discr_flow_gaussians_early_stop.webp)
 
+## [Poster](https://hal.science/hal-04322365)
+
+![Poster image](https://jyfranceschi.fr/wp-content/uploads/2023/12/gpm_poster.png)
+
 ## Requirements
 
 All models were trained with Python 3.10.4 and PyTorch 1.13.1 using CUDA 11.8. The [`requirements.txt`](requirements.txt) file lists Python package dependencies.
