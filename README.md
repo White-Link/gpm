@@ -21,6 +21,14 @@ Official implementation of the paper *Unifying GANs and Score-Based Diffusion as
 
 ## [Preprint](https://arxiv.org/abs/2305.16150)
 
+## Errata
+
+The careful reader may have noticed the following minor inconsistencies in *Section 2.2* of the published paper. These small oversights do not affect the overall conclusions of the article.
+- All references to the *time derivative of* $\sigma$ should be understood in absolute value: $\sigma' \equiv |\sigma'|$.
+- The *Gaussian kernel in Eq. (5)* should be read as:
+
+$$k_{\mathrm{RBF}}^\sigma (x, y) \triangleq \frac{1}{(\sigma \sqrt{2\pi})^{D}} \mathrm{e}^{-\frac{\|x-y\|_2^2}{2\sigma^2}}.$$
+
 ## [Animated Samples](https://jyfranceschi.fr/publications/gpm/)
 
 ![Discriminator Flow samples on MNIST](https://jyfranceschi.fr/wp-content/uploads/2023/05/discr_flow_mnist.webp)
